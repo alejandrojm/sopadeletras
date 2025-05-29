@@ -19,6 +19,7 @@
             justify-content: center;
             align-items: center;
             padding: 20px;
+            overflow: hidden; /* Prevent scrollbars from confetti */
         }
 
         .game-container {
@@ -29,6 +30,8 @@
             backdrop-filter: blur(10px);
             max-width: 800px;
             width: 100%;
+            position: relative; /* Needed for absolute positioning of overlay/confetti */
+            overflow: hidden; /* Ensures confetti stays within the container */
         }
 
         .header {
@@ -187,6 +190,103 @@
             border-left-color: #2d3748;
         }
 
+        /* Custom Message Overlay Styles */
+        .message-overlay {
+            position: absolute; /* Changed to absolute to be over the game-container */
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6); /* Darker overlay */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100; /* Above game elements */
+            opacity: 0; /* Start hidden */
+            visibility: hidden; /* Start hidden */
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+
+        .message-overlay.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .message-box {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            position: relative;
+            max-width: 90%;
+            transform: translateY(-20px); /* Slight animation on show */
+            transition: transform 0.3s ease;
+        }
+
+        .message-overlay.show .message-box {
+            transform: translateY(0);
+        }
+
+        .message-box p {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 20px;
+        }
+
+        .close-message-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            color: #718096;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 50%;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+
+        .close-message-btn:hover {
+            background-color: #e2e8f0;
+            color: #2d3748;
+        }
+
+        /* Confetti styles */
+        .confetti-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allow clicks to pass through */
+            overflow: hidden;
+            z-index: 99; /* Below message overlay, above game */
+        }
+
+        .confetti-piece {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #f00; /* Default color, will be randomized */
+            opacity: 0;
+            animation: fall 3s ease-out forwards;
+            border-radius: 50%; /* Make them round */
+        }
+
+        @keyframes fall {
+            0% {
+                transform: translateY(0) rotateZ(0deg);
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(100vh) rotateZ(720deg); /* Fall off screen */
+                opacity: 0;
+            }
+        }
+
         @media (max-width: 768px) {
             .game-board {
                 flex-direction: column;
@@ -211,6 +311,14 @@
                 flex-direction: column;
                 text-align: center;
             }
+
+            .message-box {
+                padding: 20px;
+            }
+
+            .message-box p {
+                font-size: 1.5rem;
+            }
         }
     </style>
 </head>
@@ -221,7 +329,7 @@
                 <input type="text" class="player-input" placeholder="Escribe tu nombre" id="playerName">
                 <button class="reset-btn" onclick="resetGame()">🔄 Reiniciar</button>
             </div>
-            <div class="score" id="score">Palabras encontradas: 0/10</div>
+            <div class="score" id="score">Palabras encontradas: 0/11</div>
         </div>
 
         <div class="game-board">
@@ -233,6 +341,15 @@
                 <div id="wordsList"></div>
             </div>
         </div>
+
+        <div class="message-overlay" id="messageOverlay">
+            <div class="message-box">
+                <button class="close-message-btn" id="closeMessageBtn">X</button>
+                <p id="congratulationsMessage"></p>
+            </div>
+        </div>
+
+        <div class="confetti-container" id="confettiContainer"></div>
     </div>
 
     <script>
@@ -247,10 +364,15 @@
         let selectedCells = [];
         let isSelecting = false;
         let startCell = null;
+        let messageTimeoutId = null; // To store the timeout ID for the message
 
         const GRID_SIZE = 20;
         let placedWords = []; // Para debug - guardar posiciones de palabras
 
+        /**
+         * Creates and populates the word search grid.
+         * First, attempts to place all words, then fills empty cells with random letters.
+         */
         function createGrid() {
             // Inicializar grid vacío
             grid = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(''));
@@ -271,6 +393,10 @@
             console.log('Palabras colocadas:', placedWords); // Para debug
         }
 
+        /**
+         * Attempts to place a single word on the grid in a random valid position and direction.
+         * @param {string} word - The word to place.
+         */
         function placeWord(word) {
             let placed = false;
             let attempts = 0;
@@ -298,6 +424,14 @@
             }
         }
 
+        /**
+         * Checks if a word can be placed at a given starting position and direction without conflicts.
+         * @param {string} word - The word to check.
+         * @param {number} row - Starting row.
+         * @param {number} col - Starting column.
+         * @param {number} direction - Direction index (0-7).
+         * @returns {boolean} True if the word can be placed, false otherwise.
+         */
         function canPlaceWord(word, row, col, direction) {
             const directions = [
                 [-1, -1], [-1, 0], [-1, 1],  // arriba-izq, arriba, arriba-der
@@ -325,6 +459,14 @@
             return true;
         }
 
+        /**
+         * Places a word into the grid at the specified position and direction.
+         * Assumes `canPlaceWord` has already been called and returned true.
+         * @param {string} word - The word to place.
+         * @param {number} row - Starting row.
+         * @param {number} col - Starting column.
+         * @param {number} direction - Direction index (0-7).
+         */
         function placeWordInGrid(word, row, col, direction) {
             const directions = [
                 [-1, -1], [-1, 0], [-1, 1],
@@ -341,6 +483,14 @@
             }
         }
 
+        /**
+         * Calculates the end position of a word given its start, length, and direction.
+         * @param {string} word - The word.
+         * @param {number} row - Starting row.
+         * @param {number} col - Starting column.
+         * @param {number} direction - Direction index.
+         * @returns {{row: number, col: number}} The end row and column.
+         */
         function getEndPosition(word, row, col, direction) {
             const directions = [
                 [-1, -1], [-1, 0], [-1, 1],
@@ -355,6 +505,10 @@
             return {row: endRow, col: endCol};
         }
 
+        /**
+         * Renders the grid cells in the HTML.
+         * Attaches event listeners for selection.
+         */
         function renderGrid() {
             const gridElement = document.getElementById('grid');
             gridElement.innerHTML = '';
@@ -376,6 +530,9 @@
             }
         }
 
+        /**
+         * Renders the list of words to find, marking found words.
+         */
         function renderWordsList() {
             const wordsListElement = document.getElementById('wordsList');
             wordsListElement.innerHTML = '';
@@ -388,6 +545,10 @@
             });
         }
 
+        /**
+         * Handles the start of a word selection (mousedown event).
+         * @param {MouseEvent} e - The mouse event.
+         */
         function startSelection(e) {
             isSelecting = true;
             startCell = { row: parseInt(e.target.dataset.row), col: parseInt(e.target.dataset.col) };
@@ -395,6 +556,10 @@
             e.target.classList.add('selected');
         }
 
+        /**
+         * Handles the continuation of a word selection (mouseover event).
+         * @param {MouseEvent} e - The mouse event.
+         */
         function continueSelection(e) {
             if (!isSelecting) return;
             
@@ -419,6 +584,10 @@
             });
         }
 
+        /**
+         * Handles the end of a word selection (mouseup event).
+         * Checks if the selected word is valid and updates game state.
+         */
         function endSelection() {
             if (!isSelecting) return;
             isSelecting = false;
@@ -444,10 +613,9 @@
                 renderWordsList();
                 
                 if (foundWords.size === words.length) {
-                    setTimeout(() => {
-                        const playerName = document.getElementById('playerName').value || 'Jugador';
-                        alert(`¡Felicidades ${playerName}! ¡Has encontrado todas las palabras!`);
-                    }, 500);
+                    const playerName = document.getElementById('playerName').value || 'Jugador';
+                    showCongratulationsMessage(playerName);
+                    launchConfetti();
                 }
             } else {
                 // Limpiar selección incorrecta
@@ -462,6 +630,13 @@
             startCell = null;
         }
 
+        /**
+         * Calculates all cells in a straight line between a start and end point.
+         * Only allows horizontal, vertical, and diagonal lines.
+         * @param {{row: number, col: number}} start - Starting cell.
+         * @param {{row: number, col: number}} end - Ending cell.
+         * @returns {Array<{row: number, col: number}>} An array of cells forming the line.
+         */
         function getLineCells(start, end) {
             const cells = [];
             const deltaRow = end.row - start.row;
@@ -486,10 +661,16 @@
             return cells;
         }
 
+        /**
+         * Updates the score display.
+         */
         function updateScore() {
             document.getElementById('score').textContent = `Palabras encontradas: ${foundWords.size}/${words.length}`;
         }
 
+        /**
+         * Resets the game to its initial state.
+         */
         function resetGame() {
             foundWords.clear();
             selectedCells = [];
@@ -502,6 +683,71 @@
             updateScore();
             
             document.getElementById('playerName').focus();
+            hideCongratulationsMessage(); // Hide message on reset
+            document.getElementById('confettiContainer').innerHTML = ''; // Clear confetti
+        }
+
+        /**
+         * Displays the congratulations message overlay.
+         * @param {string} playerName - The name of the player.
+         */
+        function showCongratulationsMessage(playerName) {
+            const messageOverlay = document.getElementById('messageOverlay');
+            const congratulationsMessage = document.getElementById('congratulationsMessage');
+            const closeMessageBtn = document.getElementById('closeMessageBtn');
+
+            congratulationsMessage.textContent = `¡Felicidades ${playerName}! ¡Has encontrado todas las palabras!`;
+            messageOverlay.classList.add('show');
+
+            // Set a timeout to hide the message after 30 seconds
+            messageTimeoutId = setTimeout(() => {
+                hideCongratulationsMessage();
+            }, 30000); // 30 seconds
+
+            // Add event listener for the close button
+            closeMessageBtn.onclick = hideCongratulationsMessage;
+        }
+
+        /**
+         * Hides the congratulations message overlay and clears any active timeout.
+         */
+        function hideCongratulationsMessage() {
+            const messageOverlay = document.getElementById('messageOverlay');
+            messageOverlay.classList.remove('show');
+            if (messageTimeoutId) {
+                clearTimeout(messageTimeoutId);
+                messageTimeoutId = null;
+            }
+            document.getElementById('confettiContainer').innerHTML = ''; // Clear confetti when message is closed
+        }
+
+        /**
+         * Launches a confetti effect.
+         */
+        function launchConfetti() {
+            const confettiContainer = document.getElementById('confettiContainer');
+            const colors = ['#f00', '#0f0', '#00f', '#ff0', '#0ff', '#f0f', '#ffa500', '#8a2be2']; // More colors
+            const numConfetti = 150; // More confetti pieces
+
+            for (let i = 0; i < numConfetti; i++) {
+                const piece = document.createElement('div');
+                piece.className = 'confetti-piece';
+                piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                piece.style.left = `${Math.random() * 100}%`; // Random horizontal position
+                piece.style.top = `-${Math.random() * 50}px`; // Start above the top
+                piece.style.width = `${8 + Math.random() * 7}px`; // Random size
+                piece.style.height = `${8 + Math.random() * 7}px`;
+                piece.style.animationDelay = `${Math.random() * 1.5}s`; // Stagger animation
+                piece.style.animationDuration = `${3 + Math.random() * 2}s`; // Random duration
+                piece.style.transform = `translateY(0) rotateZ(${Math.random() * 360}deg)`; // Initial slight lift and rotation
+                
+                confettiContainer.appendChild(piece);
+
+                // Remove confetti piece after animation to clean up DOM
+                piece.addEventListener('animationend', () => {
+                    piece.remove();
+                });
+            }
         }
 
         // Prevenir selección de texto
@@ -515,3 +761,4 @@
     </script>
 </body>
 </html>
+
